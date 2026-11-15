@@ -12,10 +12,11 @@ This module sends those messages for the bots. The server knows exactly which he
 
 - **Heals with a cast time** (Flash Heal, Greater Heal, Healing Wave, Holy Light, Regrowth, Prayer of Healing, ...): announced when the bot starts casting, and ended when the cast finishes or is interrupted.
 - **Heals over time** (Renew, Rejuvenation, Regrowth, Lifebloom, Riptide, Wild Growth, Earthliving, ...): announced when the bot applies them, and ended when they fade or are removed.
+- **Channelled heals** (Tranquility, Penance, First Aid bandages): announced when the bot starts channelling, and ended when the channel finishes or is interrupted. These are the channelled heals LibHealComm-4.0 itself predicts, sent the same way it does.
 
 The amount includes the bot's spell power and talents. The target's own healing modifiers (such as Mortal Strike) are applied by LibHealComm-4.0 on the receiving side, as for any other heal.
 
-Not sent (yet): channelled heals (Penance, Tranquility, Divine Hymn), Lifebloom's final bloom, and the jump targets of Chain Heal (only its first target is known before it lands). Instant heals need no prediction.
+Not sent: Divine Hymn (it picks new targets every tick, so LibHealComm-4.0 doesn't predict it either), Lifebloom's final bloom, and the jump targets of Chain Heal (only its first target is known before it lands). Instant heals need no prediction.
 
 ## Who receives it
 
@@ -45,6 +46,7 @@ Other addons can use the same handshake: whisper yourself the addon message `HEL
 | `PlayerbotHealTracker.Enable` | `1` | Enable the module. |
 | `PlayerbotHealTracker.DirectHeals` | `1` | Send heals with a cast time. |
 | `PlayerbotHealTracker.HoTs` | `1` | Send heals over time. |
+| `PlayerbotHealTracker.Channels` | `1` | Send channelled heals. |
 | `PlayerbotHealTracker.HoTDelay` | `300` | Milliseconds to wait before announcing a heal over time, so the client already shows the aura (LibHealComm-4.0 ignores the message otherwise). Raise it if bot HoTs don't show. |
 | `PlayerbotHealTracker.Debug` | `0` | Log handshakes and bot heal casts. |
 

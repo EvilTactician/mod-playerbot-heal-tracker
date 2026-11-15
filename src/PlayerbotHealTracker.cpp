@@ -18,6 +18,7 @@
 #include "SpellAuraEffects.h"
 #include "SpellAuras.h"
 #include "SpellInfo.h"
+#include "SpellMgr.h"
 #include "Unit.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
@@ -132,6 +133,7 @@ void PlayerbotHealTracker::LoadConfig()
     _enabled = sConfigMgr->GetOption<bool>("PlayerbotHealTracker.Enable", true);
     _directHeals = sConfigMgr->GetOption<bool>("PlayerbotHealTracker.DirectHeals", true);
     _hots = sConfigMgr->GetOption<bool>("PlayerbotHealTracker.HoTs", true);
+    _channels = sConfigMgr->GetOption<bool>("PlayerbotHealTracker.Channels", true);
     _hotDelay = std::max<int32>(0, sConfigMgr->GetOption<int32>("PlayerbotHealTracker.HoTDelay", 300));
     _debug = sConfigMgr->GetOption<bool>("PlayerbotHealTracker.Debug", false);
 
@@ -308,11 +310,26 @@ void PlayerbotHealTracker::Update(uint32 diff)
 void PlayerbotHealTracker::OnCastStart(Spell* spell, Unit* caster)
 {
     // Cheap checks first: this runs for every spell anything starts casting
-    if (!_enabled || !_directHeals || !HasSubscribers() || !spell || !caster || !caster->IsPlayer())
+    if (!_enabled || !HasSubscribers() || !spell || !caster || !caster->IsPlayer())
         return;
 
     SpellInfo const* spellInfo = spell->GetSpellInfo();
-    if (!spellInfo || spellInfo->IsChanneled() || !spellInfo->HasEffect(SPELL_EFFECT_HEAL) || spell->GetCastTime() <= 0)
+    if (!spellInfo)
+        return;
+
+    // Channelled heals have their own handling
+    if (spellInfo->IsChanneled())
+    {
+        if (_channels && spellInfo->HasEffect(SPELL_EFFECT_APPLY_AURA))
+        {
+            Player* bot = caster->ToPlayer();
+            if (bot->GetGroup() && IsPlayerbot(bot))
+                OnChannelStart(spell, bot);
+        }
+        return;
+    }
+
+    if (!_directHeals || !spellInfo->HasEffect(SPELL_EFFECT_HEAL) || spell->GetCastTime() <= 0)
         return;
 
     Player* bot = caster->ToPlayer();
@@ -409,6 +426,10 @@ void PlayerbotHealTracker::OnCastEnd(Spell* spell, Unit* caster, bool interrupte
     if (!spellInfo)
         return;
 
+    // A channel "casts" when it starts; it ends when its aura goes away (OnChannelAuraRemoved) or when interrupted
+    if (!interrupted && spellInfo->IsChanneled())
+        return;
+
     {
         std::lock_guard<std::mutex> guard(_castLock);
         auto itr = _castsInProgress.find(caster->GetGUID());
@@ -481,7 +502,13 @@ void PlayerbotHealTracker::OnHotApplied(Unit* target, Aura* aura)
 
 void PlayerbotHealTracker::OnHotRemoved(Unit* target, Aura* aura)
 {
-    if (!_enabled || !_hots || !HasSubscribers() || !target || !IsTrackedHot(aura))
+    if (!_enabled || !HasSubscribers() || !target || !aura || !aura->GetCasterGUID().IsPlayer())
+        return;
+
+    // A channel's aura goes away when the channel ends
+    OnChannelAuraRemoved(aura);
+
+    if (!_hots || !IsTrackedHot(aura))
         return;
 
     Unit* casterUnit = aura->GetCaster();
@@ -493,4 +520,153 @@ void PlayerbotHealTracker::OnHotRemoved(Unit* target, Aura* aura)
     char header[48];
     std::snprintf(header, sizeof(header), "HS::%u::", aura->GetId());
     QueueFromBot(bot, std::string(header) + CompressGUID(target->GetGUID()));
+}
+
+/*************************************************************************
+ * Channelled heals (Tranquility, Penance, First Aid bandages)
+ *
+ * Sent the way a client's LibHealComm-4.0 sends them: C::<spellID>:<tickAmount>:<ticks>:<targets>. The receiving
+ * side assumes 2 seconds between ticks for Tranquility and 1 second for everything else, so the tick count is the
+ * channel duration divided by the tick interval. A tick that happens the moment the channel starts (Penance) is not
+ * counted, as it has already landed.
+ *************************************************************************/
+
+void PlayerbotHealTracker::OnChannelStart(Spell* spell, Player* bot)
+{
+    SpellInfo const* spellInfo = spell->GetSpellInfo();
+
+    // The channel's periodic effect: either it heals directly (bandages) or it triggers a heal spell every tick
+    // (Tranquility, Penance)
+    SpellInfo const* healSpell = nullptr;
+    uint8 healEffect = 0;
+    int32 amplitude = 0;
+    bool periodicHeal = false;
+
+    for (uint8 i = 0; i < MAX_SPELL_EFFECTS && !healSpell; ++i)
+    {
+        SpellEffectInfo const& effect = spellInfo->Effects[i];
+        if (effect.Effect != SPELL_EFFECT_APPLY_AURA || effect.Amplitude <= 0)
+            continue;
+
+        if (effect.ApplyAuraName == SPELL_AURA_PERIODIC_HEAL)
+        {
+            healSpell = spellInfo;
+            healEffect = i;
+            amplitude = effect.Amplitude;
+            periodicHeal = true;
+        }
+        else if (effect.ApplyAuraName == SPELL_AURA_PERIODIC_TRIGGER_SPELL)
+        {
+            SpellInfo const* triggered = sSpellMgr->GetSpellInfo(effect.TriggerSpell);
+            if (!triggered)
+                continue;
+
+            for (uint8 j = 0; j < MAX_SPELL_EFFECTS; ++j)
+            {
+                if (triggered->Effects[j].Effect == SPELL_EFFECT_HEAL)
+                {
+                    healSpell = triggered;
+                    healEffect = j;
+                    amplitude = effect.Amplitude;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!healSpell || amplitude <= 0)
+        return;
+
+    // Who it heals: a single target (Penance, bandages), or the party around the caster (Tranquility)
+    SpellEffectInfo const& effect = healSpell->Effects[healEffect];
+    uint32 targetType = effect.TargetA.GetTarget();
+    Unit* unitTarget = spell->m_targets.GetUnitTarget();
+
+    std::vector<Unit*> targets;
+    if (targetType == TARGET_UNIT_CASTER)
+        targets.push_back(bot);
+    else if (IsSingleTarget(targetType) || (periodicHeal && unitTarget))
+        targets.push_back(unitTarget ? unitTarget : bot);
+    else
+    {
+        float radius = effect.CalcRadius(bot);
+        if (radius <= 0.0f)
+            radius = 30.0f;
+        uint32 areaType = IsAreaTarget(targetType) ? targetType : uint32(TARGET_UNIT_CASTER_AREA_PARTY);
+        Unit* center = (areaType == TARGET_UNIT_LASTTARGET_AREA_PARTY && unitTarget) ? unitTarget : bot;
+        CollectAreaTargets(bot, center, areaType, radius, targets);
+    }
+
+    if (targets.empty())
+        return;
+
+    // Heal per tick, before the target's own healing modifiers
+    SpellEffectInfo averaged = effect;
+    int32 basePoints = effect.BasePoints;
+    if (averaged.DieSides > 1)
+    {
+        basePoints += (averaged.DieSides + 1) / 2 - 1;
+        averaged.DieSides = 1;
+    }
+
+    int32 value = averaged.CalcValue(bot, &basePoints, targets.front());
+    if (value <= 0)
+        return;
+
+    int32 amount = int32(bot->SpellHealingBonusDone(targets.front(), healSpell, uint32(value), periodicHeal ? DOT : HEAL, healEffect));
+    if (amount <= 0)
+        return;
+
+    // Number of ticks still to come, in LibHealComm-4.0's terms
+    int32 duration = spellInfo->GetDuration();
+    int32 ticks = (duration + amplitude / 2) / amplitude;
+    if (ticks <= 0)
+        return;
+
+    std::string targetList;
+    for (Unit* target : targets)
+    {
+        if (!targetList.empty())
+            targetList += ",";
+        targetList += CompressGUID(target->GetGUID());
+    }
+
+    char header[64];
+    std::snprintf(header, sizeof(header), "C::%u:%d:%d:", spellInfo->Id, amount, ticks);
+    std::string payload = std::string(header) + targetList;
+    if (payload.size() > 240)
+        return;
+
+    {
+        std::lock_guard<std::mutex> guard(_castLock);
+        _castsInProgress[bot->GetGUID()] = spellInfo->Id;
+    }
+
+    SendFromBot(bot, payload);
+
+    if (_debug)
+        LOG_INFO("module", "mod-playerbot-heal-tracker: {} channels {} ({}) for {} x {} ticks on {} target(s).", bot->GetName(),
+            spellInfo->SpellName[0], spellInfo->Id, amount, ticks, targets.size());
+}
+
+void PlayerbotHealTracker::OnChannelAuraRemoved(Aura* aura)
+{
+    uint32 spellId = aura->GetId();
+    ObjectGuid casterGuid = aura->GetCasterGUID();
+
+    {
+        std::lock_guard<std::mutex> guard(_castLock);
+        auto itr = _castsInProgress.find(casterGuid);
+        if (itr == _castsInProgress.end() || itr->second != spellId)
+            return;
+        _castsInProgress.erase(itr);
+    }
+
+    // The channel finished (an interrupted channel was already ended by OnCastEnd)
+    if (Player* bot = ObjectAccessor::FindConnectedPlayer(casterGuid))
+    {
+        char payload[48];
+        std::snprintf(payload, sizeof(payload), "S::%u:0", spellId);
+        SendFromBot(bot, payload);
+    }
 }

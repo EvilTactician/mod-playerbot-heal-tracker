@@ -39,6 +39,16 @@ PlayerbotHealTracker.DirectHeals = 1
 PlayerbotHealTracker.HoTs = 1
 
 #
+#    PlayerbotHealTracker.Channels
+#        Description: Send channelled heals (Tranquility, Penance, First Aid bandages) while the
+#                     playerbot channels them.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+#
+
+PlayerbotHealTracker.Channels = 1
+
+#
 #    PlayerbotHealTracker.HoTDelay
 #        Description: Milliseconds to wait before sending a heal over time, so the client already
 #                     shows the aura when the message arrives (LibHealComm-4.0 ignores it otherwise).

@@ -57,6 +57,10 @@ public:
     void OnHotApplied(Unit* target, Aura* aura);
     void OnHotRemoved(Unit* target, Aura* aura);
 
+    // Channelled heals (Tranquility, Penance, First Aid bandages)
+    void OnChannelStart(Spell* spell, Player* bot);
+    void OnChannelAuraRemoved(Aura* aura);
+
     // Sends queued messages whose delay has passed
     void Update(uint32 diff);
 
@@ -84,6 +88,7 @@ private:
     bool _enabled = true;
     bool _directHeals = true;
     bool _hots = true;
+    bool _channels = true;
     int32 _hotDelay = 250;
     bool _debug = false;
 
@@ -92,7 +97,7 @@ private:
     std::unordered_set<ObjectGuid> _subscribers;
     std::atomic<size_t> _subscriberCount{0};
 
-    // Heal casts in progress per bot (bot GUID -> spell ID), so we only send "stopped" for casts we announced
+    // Heal casts and channels in progress per bot (bot GUID -> spell ID), so we only send "stopped" for casts we announced
     std::mutex _castLock;
     std::unordered_map<ObjectGuid, uint32> _castsInProgress;
 
