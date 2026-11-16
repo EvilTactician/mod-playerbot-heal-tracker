@@ -1,0 +1,68 @@
+[worldserver]
+
+###################################################################################################
+# mod-playerbot-heal-tracker
+#
+# Sends the heals cast by playerbots to players' clients in the LibHealComm-4.0 format, so addons
+# that show incoming heals (Improved Raid Frames, DragonUI, ...) show playerbot heals too.
+# Only players whose addon asks for it receive the data (Improved Raid Frames: Options ->
+# Heal Prediction -> Show Playerbot Heals).
+###################################################################################################
+
+#
+#    PlayerbotHealTracker.Enable
+#        Description: Enable the module.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+#
+
+PlayerbotHealTracker.Enable = 1
+
+#
+#    PlayerbotHealTracker.DirectHeals
+#        Description: Send heals with a cast time (Flash Heal, Healing Wave, Holy Light, Regrowth,
+#                     Prayer of Healing, ...) while the playerbot is casting them.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+#
+
+PlayerbotHealTracker.DirectHeals = 1
+
+#
+#    PlayerbotHealTracker.HoTs
+#        Description: Send heals over time (Renew, Rejuvenation, Regrowth, Lifebloom, Riptide,
+#                     Wild Growth, Earthliving, ...) cast by playerbots.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+#
+
+PlayerbotHealTracker.HoTs = 1
+
+#
+#    PlayerbotHealTracker.Channels
+#        Description: Send channelled heals (Tranquility, Penance, First Aid bandages) while the
+#                     playerbot channels them.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+#
+
+PlayerbotHealTracker.Channels = 1
+
+#
+#    PlayerbotHealTracker.HoTDelay
+#        Description: Milliseconds to wait before sending a heal over time, so the client already
+#                     shows the aura when the message arrives (LibHealComm-4.0 ignores it otherwise).
+#                     Raise this if heals over time from playerbots don't show.
+#        Default:     300
+#
+
+PlayerbotHealTracker.HoTDelay = 300
+
+#
+#    PlayerbotHealTracker.Debug
+#        Description: Log handshakes and playerbot heal casts to the server log.
+#        Default:     0 - (Disabled)
+#                     1 - (Enabled)
+#
+
+PlayerbotHealTracker.Debug = 0
